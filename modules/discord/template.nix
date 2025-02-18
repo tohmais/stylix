@@ -8,8 +8,8 @@
   **/
 
   :root {
-      --font-primary: ${fonts.sansSerif.name};
-      --font-display: ${fonts.sansSerif.name};
+      /*--font-primary: ${fonts.sansSerif.name};*/
+      /*--font-display: ${fonts.sansSerif.name};*/
       --font-code: ${fonts.monospace.name};
       --base00: #${colors.base00}; /* Black */
       --base01: #${colors.base01}; /* Bright Black */
