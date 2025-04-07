@@ -12,7 +12,15 @@
 
     base16-vim = {
       flake = false;
-      url = "github:tinted-theming/base16-vim";
+
+      # TODO: Unlock this input once [1] ("Seemingly bad parsing of whitespace
+      # in abbriviated lists (affecting stylix's handling of base16-vim)") is
+      # resolved, preventing us from fetching commit [2] ("fix(theme): Remove
+      # illegal style attributes").
+      #
+      # [1]: https://github.com/SenchoPens/fromYaml/issues/1
+      # [2]: https://github.com/tinted-theming/tinted-vim/commit/0508601eff146db2537eff23e93dd0c543914896
+      url = "github:tinted-theming/base16-vim/577fe8125d74ff456cf942c733a85d769afe58b7";
     };
 
     base16.url = "github:SenchoPens/base16.nix";
@@ -30,7 +38,6 @@
     git-hooks = {
       inputs = {
         flake-compat.follows = "flake-compat";
-        nixpkgs-stable.follows = "git-hooks/nixpkgs";
         nixpkgs.follows = "nixpkgs";
       };
 
@@ -130,14 +137,36 @@
         } self.packages.${system};
 
         devShells = {
-          default = pkgs.mkShell {
-            inherit (self.checks.${system}.git-hooks) shellHook;
+          default =
+            let
+              check = pkgs.writeShellApplication {
+                name = "stylix-check";
+                runtimeInputs = with pkgs; [
+                  nix
+                  nix-fast-build
+                ];
+                text = ''
+                  cores="$(nproc)"
+                  system="$(nix eval --expr builtins.currentSystem --impure --raw)"
+                  nix-fast-build \
+                    --eval-max-memory-size 512 \
+                    --eval-workers "$cores" \
+                    --flake ".#checks.$system" \
+                    --no-link \
+                    --skip-cached \
+                    "$@"
+                '';
+              };
+            in
+            pkgs.mkShell {
+              inherit (self.checks.${system}.git-hooks) shellHook;
 
-            packages = [
-              inputs.home-manager.packages.${system}.default
-              self.checks.${system}.git-hooks.enabledPackages
-            ];
-          };
+              packages = [
+                check
+                inputs.home-manager.packages.${system}.default
+                self.checks.${system}.git-hooks.enabledPackages
+              ];
+            };
 
           ghc = pkgs.mkShell {
             inputsFrom = [ self.devShells.${system}.default ];
@@ -149,38 +178,6 @@
           let
             universalPackages = {
               docs = import ./docs { inherit pkgs inputs lib; };
-
-              nix-flake-check = pkgs.writeShellApplication {
-                meta.description = "A parallelized alternative to 'nix flake check'";
-                name = "nix-flake-check";
-
-                runtimeInputs = with pkgs; [
-                  nix
-                  jq
-                  parallel
-                ];
-
-                text = ''
-                  nix flake show --json --no-update-lock-file ${self} |
-                    jq --raw-output '
-                      ((.checks."${system}" // {}) | keys) as $checks |
-                      ((.packages."${system}" // {}) | keys) as $packages |
-                      (($checks - $packages)[] | "checks.${system}.\(.)"),
-                      ($packages[] | "packages.${system}.\(.)")
-                    ' |
-                    parallel \
-                      --bar \
-                      --color \
-                      --color-failed \
-                      --halt now,fail=1 \
-                      --tagstring '{}' \
-                      '
-                        nix build --no-update-lock-file --print-build-logs \
-                          ${self}#{}
-                      '
-                '';
-              };
-
               palette-generator = pkgs.callPackage ./palette-generator { };
             };
 
@@ -189,8 +186,19 @@
             testbedPackages = lib.optionalAttrs (lib.hasSuffix "-linux" system) (
               import ./stylix/testbed.nix { inherit pkgs inputs lib; }
             );
+
+            # Discord is not available on arm64. This workaround filters out
+            # testbeds using that package, until we have a better way to handle
+            # this.
+            testbedPackages' =
+              if system == "aarch64-linux" then
+                lib.filterAttrs (
+                  name: _: !lib.hasPrefix "testbed:discord:vencord" name
+                ) testbedPackages
+              else
+                testbedPackages;
           in
-          universalPackages // testbedPackages;
+          universalPackages // testbedPackages';
       }
     )
     // {
